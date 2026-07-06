@@ -31,14 +31,21 @@ Code does logic; the model does prose.
 ## Pipeline
 fetch → normalize → diff → summarize → render → deliver
 
-- `fetchers/` — one module per source; returns raw API JSON; no transformation.
-  - `canvas.py`: token auth (`CANVAS_TOKEN`, `CANVAS_BASE_URL`). Upcoming
-    assignments, announcements, planner items.
+- `fetchers/` — one module per source; returns raw source data; no transformation.
+  - `canvas.py`: CWRU disables personal API tokens, so fetch the personal ICS
+    calendar feed at `CANVAS_ICS_URL` (from .env — the URL embeds a secret
+    token; never hardcode, log, or commit it). Parse with `icalendar`. Yields
+    assignments and course events with due dates. ICS carries NO announcements,
+    grades, or submission status — announcements reach the briefing via the
+    Gmail fetcher instead (see Gmail query below).
   - `gcal.py`, `gmail.py`: one Google Cloud project, OAuth2, scopes
     `calendar.readonly` + `gmail.readonly`; refresh token persisted at
     `data/google_token.json`.
-  - Gmail default query: `newer_than:1d (is:unread OR is:important OR is:starred)`,
-    cap 25 messages, snippets only — no full bodies in v1.
+  - Gmail default query: `newer_than:1d (is:unread OR is:important OR is:starred
+    OR from:instructure.com)`, cap 25 messages, snippets only — no full bodies
+    in v1. The `from:instructure.com` clause is the Canvas announcement bridge:
+    Canvas → Account → Notifications → Announcement = notify immediately, so
+    announcements land in Gmail and the briefing tags them as Canvas items.
 - `normalize.py` — raw JSON → `Item` dataclass:
   `(source, source_id, kind, title, due_at_utc, starts_at_utc, url, snippet)`.
 - `state.py` — SQLite at `data/eos.db`; tracks `(source, source_id, content_hash,
@@ -93,7 +100,7 @@ data/         (db, tokens, out/, logs — gitignored)
 ```
 
 ## Build order (one vertical slice per session)
-1. Canvas fetcher → raw JSON to stdout
+1. Canvas ICS fetcher → parsed assignments/events to stdout
 2. normalize + SQLite state → "new since last run" as plain data
 3. summarize via Ollama + `--dry-run` loop
 4. render artifacts + email delivery
@@ -104,7 +111,7 @@ data/         (db, tokens, out/, logs — gitignored)
 - One slice at a time; do not start the next slice unprompted.
 - Propose a brief plan before non-trivial work; keep diffs small.
 - Commit after each working step with a descriptive message.
-- Pre-approved deps: requests, python-dotenv, google-api-python-client,
+- Pre-approved deps: requests, icalendar, python-dotenv, google-api-python-client,
   google-auth-oauthlib, pytest. Anything else: ask first, with a one-line reason.
 - If a request conflicts with this file, say so instead of silently deviating.
 - Update this file when a convention changes.
@@ -112,4 +119,7 @@ data/         (db, tokens, out/, logs — gitignored)
 ## Non-goals (v1)
 Document editor, chat UI, vector memory, multi-user, write actions to any
 service, Docker, cloud APIs, eval harness (v2), the app/widget (future — but the
-briefing JSON contract exists for it).
+briefing JSON contract exists for it), Canvas extension bridge (v1.1: Chrome
+extension reads announcements + submission status via logged-in session,
+POSTs to a localhost ingest listener → `data/canvas_cache.json`; eos prefers
+fresh cache, falls back to ICS with a staleness note).
