@@ -1,50 +1,47 @@
-"""Slice 1: Canvas ICS fetcher.
+"""Canvas ICS fetcher — raw source data only, no transformation.
 
-Fetch the Canvas calendar feed at CANVAS_ICS_URL, parse it with icalendar,
-and print each upcoming assignment/event to stdout as structured JSON:
-title, course (if available), due/start time, and url.
-
-Deliberately minimal per the build order: no retries, no classes, no
-normalization. Those arrive in later slices.
-
-    python -m eos.fetchers.canvas
+Per the fetcher contract in CLAUDE.md, this module only does I/O and
+parsing: fetch the ICS feed at CANVAS_ICS_URL and hand back raw event
+dicts. All semantic work (upcoming filter, course split, UTC conversion,
+mapping to the Item dataclass) lives in normalize.py.
 """
 
-import json
 import os
-import re
 import sys
-from datetime import date, datetime, timezone
 
 import requests
 from dotenv import load_dotenv
 from icalendar import Calendar
 
 
-def _to_utc(dt):
-    """Normalize an icalendar DTSTART value to an aware UTC datetime.
+def parse_events(ics_bytes):
+    """Parse ICS bytes into raw event dicts. Pure: no network, no filtering.
 
-    icalendar hands back either a `datetime` (aware or naive) or, for
-    all-day entries, a `date`. Canvas feeds are usually UTC ("Z"), so a
-    naive datetime is assumed UTC. All-day dates become midnight UTC.
-    Used for the "is this upcoming?" check and for stable display.
+    Values are handed back as icalendar decoded them — notably `dtstart`
+    is a `datetime` or (for all-day entries) a `date`, and `summary` still
+    carries any trailing "[Course]". normalize.py interprets all of this.
     """
-    if isinstance(dt, datetime):
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-    return datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc)
+    calendar = Calendar.from_ical(ics_bytes)
+    events = []
+    for component in calendar.walk("VEVENT"):
+        dtstart = component.get("DTSTART")
+        dtend = component.get("DTEND")
+        uid = component.get("UID")
+        url = component.get("URL")
+        events.append(
+            {
+                "uid": str(uid) if uid is not None else None,
+                "summary": str(component.get("SUMMARY", "")),
+                "dtstart": dtstart.dt if dtstart is not None else None,
+                "dtend": dtend.dt if dtend is not None else None,
+                "url": str(url) if url else None,
+            }
+        )
+    return events
 
 
-def _split_course(summary):
-    """Canvas encodes the course as a trailing "[Course Name]" in SUMMARY."""
-    match = re.search(r"\[([^\]]+)\]\s*$", summary)
-    if match:
-        return summary[: match.start()].strip(), match.group(1).strip()
-    return summary.strip(), None
-
-
-def main():
+def fetch_events():
+    """Fetch and parse the configured Canvas ICS feed. Raw dicts, no transform."""
     load_dotenv()
     url = os.environ.get("CANVAS_ICS_URL")
     if not url:
@@ -59,34 +56,4 @@ def main():
         status = exc.response.status_code if exc.response is not None else "no response"
         sys.exit(f"Failed to fetch Canvas ICS feed ({status})")
 
-    calendar = Calendar.from_ical(response.content)
-    now = datetime.now(timezone.utc)
-
-    items = []
-    for event in calendar.walk("VEVENT"):
-        dtstart = event.get("DTSTART")
-        if dtstart is None:
-            continue
-        when = _to_utc(dtstart.dt)
-        if when < now:
-            continue  # past — only upcoming items belong in the briefing
-
-        title, course = _split_course(str(event.get("SUMMARY", "")).strip())
-        url_prop = event.get("URL")
-        items.append(
-            {
-                "title": title,
-                "course": course,
-                "when": when.isoformat(),
-                "url": str(url_prop) if url_prop else None,
-            }
-        )
-
-    items.sort(key=lambda item: item["when"])
-    json.dump(items, sys.stdout, indent=2)
-    sys.stdout.write("\n")
-    print(f"{len(items)} upcoming item(s)", file=sys.stderr)
-
-
-if __name__ == "__main__":
-    main()
+    return parse_events(response.content)
