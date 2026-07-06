@@ -1,0 +1,13 @@
+# Secrets — never commit
+.env
+
+# Local data: db, OAuth tokens, rendered briefings, logs
+data/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
