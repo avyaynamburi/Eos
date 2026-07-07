@@ -12,7 +12,7 @@ import argparse
 import json
 import sys
 
-from eos import normalize, state
+from eos import normalize, state, summarize
 from eos.fetchers import canvas
 
 
@@ -49,6 +49,10 @@ def main(argv=None):
     json.dump(output, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
     print(f"{len(new)} new, {len(seen)} previously seen", file=sys.stderr)
+
+    overview = summarize.summarize(new, seen)
+    sys.stdout.write("\n--- briefing overview ---\n")
+    sys.stdout.write(overview + "\n")
 
     if not args.dry_run:
         state.commit_seen(conn, items)

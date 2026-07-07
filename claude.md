@@ -12,7 +12,11 @@ MacBook Air (M2, 8 GB) against local Ollama. Single user (me).
 - All model calls go to local Ollama (`http://localhost:11434`). NEVER add a cloud
   LLM call or fallback.
 - 8 GB unified memory: default model must be ≤4B params. `OLLAMA_MODEL` from .env,
-  default `qwen3:4b` (disable thinking mode for latency), fallback `llama3.2:3b`.
+  default `qwen3:4b`, fallback `OLLAMA_FALLBACK_MODEL` (default `llama3.2`, ~3B).
+  NOTE: on Ollama 0.30.10 qwen3 thinking cannot be reliably disabled (`think:false`
+  and `/no_think` only relocate or hide it, and it is slow on 8 GB), so summarize
+  auto-falls back to the non-thinking model — it does not depend on turning
+  qwen3's thinking off.
 - Read-only scopes only. This system never writes to Canvas or Google. Never
   request write scopes.
 - Secrets live in `.env` (gitignored). NEVER hardcode, log, print, or commit
@@ -52,7 +56,12 @@ fetch → normalize → diff → summarize → render → deliver
   first_seen_at)`. The diff is the product: the briefing leads with what is NEW
   since the last successful run, then upcoming items.
 - `summarize.py` — one prompt built from structured items; keep total prompt
-  under ~6k tokens (truncate snippets, cap items per section).
+  under ~6k tokens (truncate snippets, cap items per section). The digest fed
+  to the model carries NO exact dates — only code-computed relative buckets
+  (today / this week / later) — so a hallucinated deadline is impossible; exact
+  dates are interpolated by render. Tries `OLLAMA_MODEL` first (90s budget) and
+  auto-falls back to `OLLAMA_FALLBACK_MODEL` if it is too slow or its output
+  reads like leaked reasoning.
 - `render.py` — writes `data/out/briefing-YYYY-MM-DD.json` and `.md`. The JSON
   schema is versioned (`schema_version`) and is the contract a future app/widget
   will consume. Never change it silently — bump the version.
